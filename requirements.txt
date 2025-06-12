@@ -22,3 +22,4 @@ redis
 chainlit
 rich
 questionary
+git+https://github.com/phamdinhkhanh/vnquant.git
