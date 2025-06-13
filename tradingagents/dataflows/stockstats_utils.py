@@ -4,6 +4,7 @@ from stockstats import wrap
 from typing import Annotated
 import os
 from .config import get_config
+from .vnquant_utils import VNQuantUtils  # Import the VNQuantUtils class
 
 
 class StockstatsUtils:
@@ -27,18 +28,25 @@ class StockstatsUtils:
     ):
         df = None
         data = None
+        
+        # Check if it's a Vietnamese stock
+        is_vn_stock = VNQuantUtils.is_vn_stock(symbol) if hasattr(VNQuantUtils, 'is_vn_stock') else False
 
         if not online:
             try:
+                # Try to find either YFin or VNQuant data files
+                file_prefix = "VNQuant" if is_vn_stock else "YFin"
+                
                 data = pd.read_csv(
                     os.path.join(
                         data_dir,
-                        f"{symbol}-YFin-data-2015-01-01-2025-03-25.csv",
+                        f"{symbol}-{file_prefix}-data-2015-01-01-2025-03-25.csv",
                     )
                 )
                 df = wrap(data)
             except FileNotFoundError:
-                raise Exception("Stockstats fail: Yahoo Finance data not fetched yet!")
+                source_type = "Vietnamese" if is_vn_stock else "Yahoo Finance"
+                raise Exception(f"Stockstats fail: {source_type} data not fetched yet!")
         else:
             # Get today's date as YYYY-mm-dd to add to cache
             today_date = pd.Timestamp.today()
@@ -53,30 +61,52 @@ class StockstatsUtils:
             config = get_config()
             os.makedirs(config["data_cache_dir"], exist_ok=True)
 
+            # Use different file naming depending on data source
+            file_prefix = "VNQuant" if is_vn_stock else "YFin"
             data_file = os.path.join(
                 config["data_cache_dir"],
-                f"{symbol}-YFin-data-{start_date}-{end_date}.csv",
+                f"{symbol}-{file_prefix}-data-{start_date}-{end_date}.csv",
             )
 
             if os.path.exists(data_file):
                 data = pd.read_csv(data_file)
                 data["Date"] = pd.to_datetime(data["Date"])
             else:
-                data = yf.download(
-                    symbol,
-                    start=start_date,
-                    end=end_date,
-                    multi_level_index=False,
-                    progress=False,
-                    auto_adjust=True,
-                )
-                data = data.reset_index()
+                if is_vn_stock:
+                    # Get Vietnamese stock data using vnquant
+                    data = VNQuantUtils.get_stock_data(
+                        symbol,
+                        start=start_date,
+                        end=end_date
+                    )
+                    # Reset index to get date as column
+                    data = data.reset_index()
+                    if "index" in data.columns:
+                        data = data.rename(columns={"index": "Date"})
+                else:
+                    # Use yfinance for non-Vietnamese stocks
+                    data = yf.download(
+                        symbol,
+                        start=start_date,
+                        end=end_date,
+                        multi_level_index=False,
+                        progress=False,
+                        auto_adjust=True,
+                    )
+                    data = data.reset_index()
+                
+                # Save to cache
                 data.to_csv(data_file, index=False)
 
+            # Prepare for stockstats
             df = wrap(data)
-            df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
+            
+            # Ensure Date column is properly formatted
+            if isinstance(df["Date"].iloc[0], pd.Timestamp) or isinstance(df["Date"].iloc[0], pd.DatetimeIndex):
+                df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
             curr_date = curr_date.strftime("%Y-%m-%d")
 
+        # Calculate indicator and find the value for the requested date
         df[indicator]  # trigger stockstats to calculate the indicator
         matching_rows = df[df["Date"].str.startswith(curr_date)]
 

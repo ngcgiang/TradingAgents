@@ -14,6 +14,7 @@ from tqdm import tqdm
 import yfinance as yf
 from openai import OpenAI
 from .config import get_config, set_config, DATA_DIR
+from .vnquant_utils import VNQuantUtils
 
 
 def get_finnhub_news(
@@ -802,3 +803,50 @@ def get_fundamentals_openai(ticker, curr_date):
     )
 
     return response.output[1].content[0].text
+
+
+def get_VNQuant_data(
+    symbol: Annotated[str, "ticker symbol of Vietnamese company"],
+    start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
+    end_date: Annotated[str, "End date in yyyy-mm-dd format"],
+    data_dir: Annotated[str, "directory to save data to"] = None,
+):
+    """Get Vietnamese stock market data from vnquant"""
+    datetime.strptime(start_date, "%Y-%m-%d")
+    datetime.strptime(end_date, "%Y-%m-%d")
+
+    symbol = symbol.upper()  # VNQuant uses uppercase symbols
+
+    # First check if data is in cache
+    if data_dir:
+        cache_filename = os.path.join(
+            data_dir,
+            "market_data",
+            "price_data",
+            f"{symbol}-VNQuant-data-{start_date}-{end_date}.csv",
+        )
+        if os.path.exists(cache_filename):
+            # Load from cache
+            df = pd.read_csv(cache_filename, index_col=0, parse_dates=True)
+            header = f"# Stock data for {symbol} from {start_date} to {end_date} (cached)\n"
+            header += f"# Data retrieved from cache: {cache_filename}\n\n"
+            return header + df.to_csv()
+
+    # If not in cache, get from VNQuant
+    data = VNQuantUtils.get_stock_data(symbol, start_date, end_date)
+
+    # Check if data is empty
+    if data.empty:
+        return f"No data found for {symbol} between {start_date} and {end_date}"
+
+    # Format data for display
+    if data_dir:
+        os.makedirs(os.path.join(data_dir, "market_data", "price_data"), exist_ok=True)
+        data.to_csv(cache_filename)
+
+    # Add header information
+    header = f"# Stock data for Vietnamese stock {symbol} from {start_date} to {end_date}\n"
+    header += f"# Total records: {len(data)}\n"
+    header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+
+    return header + data.to_csv()
